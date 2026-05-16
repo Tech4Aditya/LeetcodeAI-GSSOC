@@ -5,6 +5,10 @@
     console.log("LeetLog AI: Tracking successful submissions...");
 
     let isProcessing = false;
+    // Auto-trigger debounce and dedupe helpers
+    let autoTriggerTimer = null;
+    const AUTO_TRIGGER_DEBOUNCE_MS = 800; // wait for DOM to settle
+    const AUTO_TRIGGER_MIN_INTERVAL_MS = 60 * 1000; // 1 minute between auto-triggers for same submission
 
     // Function to handle data extraction and blog generation
     const triggerBlogGeneration = async () => {
@@ -78,6 +82,42 @@
         }
     };
 
+    // Compute a lightweight key for the current problem to avoid duplicate auto-posts
+    const _computeProblemKey = () => {
+        try {
+            const titleElement = document.querySelector('div[data-cy="question-title"]') ||
+                document.querySelector('.text-title-large') ||
+                document.querySelector('div.h-full.flex-col > div > div > span');
+            const title = titleElement ? titleElement.innerText.trim() : "";
+
+            const allLinks = document.querySelectorAll('a[href^="/u/"]');
+            let author = "";
+            for (let link of allLinks) {
+                let u = link.getAttribute('href').split('/u/')[1] || "";
+                if (u) { author = u.replace('/', ''); break; }
+            }
+
+            let code = "";
+            const viewLines = document.querySelector('.view-lines');
+            if (viewLines) {
+                code = Array.from(viewLines.children).map(line => line.innerText).join('\n');
+            } else {
+                const monaco = document.querySelector('.monaco-editor');
+                if (monaco) code = Array.from(monaco.querySelectorAll('.view-line')).map(l => l.innerText).join('\n');
+                if (!code || code.trim().length < 5) {
+                    const textarea = document.querySelector('textarea.monaco-mouse-cursor-text') || document.querySelector('textarea');
+                    code = textarea ? textarea.value : "";
+                }
+            }
+
+            // Keep key reasonably small - use first 200 chars of code
+            const shortCode = (code || "").slice(0, 200);
+            return `${title}||${author}||${shortCode}`;
+        } catch (e) {
+            return null;
+        }
+    };
+
     // Start of Listener for manual triggers from popup
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.type === 'MANUAL_TRIGGER') {
@@ -88,10 +128,32 @@
     // Observer for automagic trigger on successful submission
     const observer = new MutationObserver(async (mutations) => {
         const resultElement = document.querySelector('[data-e2e-locator="submission-result"]');
-        if (resultElement && resultElement.innerText.trim() === 'Accepted') {
-            // Check storage for key before auto-triggering
-            const data = await chrome.storage.local.get(['geminiKey']);
-            triggerBlogGeneration();
+        if (resultElement && resultElement.innerText && resultElement.innerText.trim().toLowerCase() === 'accepted') {
+            // Debounce rapid DOM mutations that happen on submission
+            if (autoTriggerTimer) clearTimeout(autoTriggerTimer);
+            autoTriggerTimer = setTimeout(async () => {
+                try {
+                    const key = _computeProblemKey();
+                    const stored = await chrome.storage.local.get(['lastAutoTrigger', 'geminiKey']);
+                    const last = stored.lastAutoTrigger || {};
+
+                    const now = Date.now();
+                    if (key && last.hash === key && (now - (last.ts || 0)) < AUTO_TRIGGER_MIN_INTERVAL_MS) {
+                        // Duplicate within short interval — ignore
+                        return;
+                    }
+
+                    // Optionally ensure the user has configured a key before auto-posting
+                    // If no geminiKey is present, skip auto-trigger
+                    if (!stored.geminiKey) return;
+
+                    // Record this trigger and run
+                    await chrome.storage.local.set({ lastAutoTrigger: { hash: key, ts: now } });
+                    triggerBlogGeneration();
+                } catch (err) {
+                    console.error('Auto-trigger error:', err);
+                }
+            }, AUTO_TRIGGER_DEBOUNCE_MS);
         }
     });
 
