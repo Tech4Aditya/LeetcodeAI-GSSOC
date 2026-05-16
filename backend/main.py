@@ -56,3 +56,40 @@ def create_blog(problem: Problem):
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=10000, reload=True)
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from twilio.rest import Client
+import motor.motor_asyncio
+
+# Twilio setup
+twilio_client = Client(
+    os.getenv("TWILIO_ACCOUNT_SID"),
+    os.getenv("TWILIO_AUTH_TOKEN")
+)
+
+# MongoDB setup
+mongo_client = motor.motor_asyncio.AsyncIOMotorClient(os.getenv("MONGODB_URI"))
+db = mongo_client.leetcodeai
+
+class ReminderPreference(BaseModel):
+    whatsapp_number: str
+    reminder_time: str = "09:00"
+    timezone: str = "Asia/Kolkata"
+    is_opted_in: bool = True
+
+@app.post("/reminder/subscribe")
+async def subscribe(pref: ReminderPreference):
+    await db.preferences.update_one(
+        {"whatsapp_number": pref.whatsapp_number},
+        {"$set": pref.dict()},
+        upsert=True
+    )
+    return {"status": "success", "message": "Subscribed!"}
+
+@app.post("/reminder/unsubscribe")
+async def unsubscribe(data: dict):
+    await db.preferences.update_one(
+        {"whatsapp_number": data["whatsapp_number"]},
+        {"$set": {"is_opted_in": False}}
+    )
+    return {"status": "success", "message": "Unsubscribed!"}
