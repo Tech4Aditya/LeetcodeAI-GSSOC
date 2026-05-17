@@ -6,6 +6,10 @@
 
     let isProcessing = false;
     let hasGeneratedForAccepted = false;
+    // Auto-trigger debounce and dedupe helpers
+    let autoTriggerTimer = null;
+    const AUTO_TRIGGER_DEBOUNCE_MS = 800; // wait for DOM to settle
+    const AUTO_TRIGGER_MIN_INTERVAL_MS = 60 * 1000; // 1 minute between auto-triggers for same submission
 
     // Function to handle data extraction and blog generation
     const triggerBlogGeneration = async (custom_prompt = "") => {
@@ -76,6 +80,42 @@
             console.error("LeetLog AI Error:", error);
             chrome.runtime.sendMessage({ type: 'STATUS_UPDATE', message: 'Auto-Post Error: ' + error.message, status: 'error' });
             isProcessing = false;
+        }
+    };
+
+    // Compute a lightweight key for the current problem to avoid duplicate auto-posts
+    const _computeProblemKey = () => {
+        try {
+            const titleElement = document.querySelector('div[data-cy="question-title"]') ||
+                document.querySelector('.text-title-large') ||
+                document.querySelector('div.h-full.flex-col > div > div > span');
+            const title = titleElement ? titleElement.innerText.trim() : "";
+
+            const allLinks = document.querySelectorAll('a[href^="/u/"]');
+            let author = "";
+            for (let link of allLinks) {
+                let u = link.getAttribute('href').split('/u/')[1] || "";
+                if (u) { author = u.replace('/', ''); break; }
+            }
+
+            let code = "";
+            const viewLines = document.querySelector('.view-lines');
+            if (viewLines) {
+                code = Array.from(viewLines.children).map(line => line.innerText).join('\n');
+            } else {
+                const monaco = document.querySelector('.monaco-editor');
+                if (monaco) code = Array.from(monaco.querySelectorAll('.view-line')).map(l => l.innerText).join('\n');
+                if (!code || code.trim().length < 5) {
+                    const textarea = document.querySelector('textarea.monaco-mouse-cursor-text') || document.querySelector('textarea');
+                    code = textarea ? textarea.value : "";
+                }
+            }
+
+            // Keep key reasonably small - use first 200 chars of code
+            const shortCode = (code || "").slice(0, 200);
+            return `${title}||${author}||${shortCode}`;
+        } catch (e) {
+            return null;
         }
     };
 
