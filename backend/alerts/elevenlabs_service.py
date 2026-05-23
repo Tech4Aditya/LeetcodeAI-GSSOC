@@ -17,12 +17,24 @@ def generate_audio(text: str) -> str:
     if not client:
         raise ValueError("ELEVENLABS_API_KEY is not set")
         
+    # Resolve voice ID dynamically
+    target_voice_name = "Anya"
+    selected_voice_id = "21m00Tcm4TlvDq8ikWAM" # Fallback Rachel
+    try:
+        voices = client.voices.get_all().voices
+        for v in voices:
+            if target_voice_name.lower() in v.name.lower():
+                selected_voice_id = v.voice_id
+                break
+    except Exception as e:
+        print("Could not fetch voices list:", e)
+
     response = client.text_to_speech.convert(
-        voice_id="21m00Tcm4TlvDq8ikWAM", # Standard Rachel voice
+        voice_id=selected_voice_id,
         optimize_streaming_latency="0",
         output_format="mp3_22050_32",
         text=text,
-        model_id="eleven_turbo_v2_5",
+        model_id="eleven_multilingual_v2",
         voice_settings=VoiceSettings(
             stability=0.5,
             similarity_boost=0.75,
